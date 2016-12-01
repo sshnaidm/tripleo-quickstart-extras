@@ -28,6 +28,8 @@ Role Variables
   This is useful if the project is directly checked out by the gate job as this
   retains "Depends-On" functionality for the rest of the projects. Also useful
   to skip projects that DLRN cannot build.
+* `artg_repos_dir` -- directories root for copying sources from for further
+  building.
 
 ```yaml
 artg_change_list:
