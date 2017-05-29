@@ -1,0 +1,45 @@
+- when: not initramfs_image|bool
+  block:
+    - name: Set name for RAW image
+      set_fact:
+        image_to_modify_raw: "{{ image_to_modify|replace('qcow2', 'raw') }}"
+
+    - name: Set temp dir
+      set_fact:
+        mount_tempdir: "{{ lookup('pipe', 'mktemp -d') }}"
+
+    - name: Convert and extract image
+      shell: >
+        qemu-img convert -f qcow2 -O raw {{ image_to_modify }} {{ image_to_modify_raw }};
+        rm -rf {{ image_to_modify }};
+        sudo kpartx -avs {{ image_to_modify_raw }};
+        sudo mount /dev/mapper/loop0p1 {{ mount_tempdir }} || sudo mount /dev/loop0 {{ mount_tempdir }};
+
+    - name: Upload files to image
+      shell: >
+        sudo cp {{ item.src }} {{ mount_tempdir }}/{{ item.dest }};
+      with_items: "{{ modify_image_upload_files }}"
+
+    - name: Run script on image
+      shell: >
+        sudo mv {{ mount_tempdir }}/etc/resolv.conf{,_};
+        echo -e "nameserver 8.8.8.8\nnameserver 8.8.4.4" | sudo dd of={{ mount_tempdir }}/etc/resolv.conf;
+        sudo cp {{ modify_script }} {{ mount_tempdir }}/tmp/{{ modify_script }};
+        set -o pipefail && sudo chroot bash {{ mount_tempdir }}/tmp/{{ modify_script }} 2>&1
+        {{ timestamper_cmd }} > {{ working_dir }}/{{ modify_script }}.$(date +%s).log;
+        sudo mv -f {{ mount_tempdir }}/etc/resolv.conf{_,};
+
+    - name: Extract files from image
+      shell: cp {{ mount_tempdir }}/{{ item }} {{ modify_image_working_dir }}/;
+      with_items: "{{ modify_image_extract_list }}"
+      ignore_errors: true
+
+    - name:
+      shell: >
+        sudo chroot {{ mount_tempdir }} setfiles /etc/selinux/targeted/contexts/files/file_contexts / ;
+        sudo umount {{ mount_tempdir }};
+        sudo kpartx -dv {{ image_to_modify_raw }};
+        qemu-img convert -c -f raw -O qcow2 {{ image_to_modify_raw }} {{ image_to_modify }};
+        sudo rm -rf {{ image_to_modify_raw }};
+        sudo losetup -d /dev/loop0;
+        sudo rm -rf {{ mount_tempdir }}
